@@ -11,6 +11,7 @@ pub mod json;
 pub mod parsers;
 pub mod pythonic;
 pub mod response;
+pub mod structural_tag;
 #[cfg(test)]
 pub mod tests;
 pub mod tools;
@@ -37,6 +38,10 @@ pub use parsers::{
 };
 pub use pythonic::try_tool_call_parse_pythonic;
 pub use response::{CalledFunction, ToolCallResponse, ToolCallType};
+pub use structural_tag::{
+    DsmlToolCallsConfig, StructuralTagBuilder, StructuralTagSchemaMode, TOOL_NAME_PLACEHOLDER,
+    ToolCallFormatBuildContext, TriggeredTagsConfig,
+};
 pub use tools::{
     try_tool_call_parse_aggregate, try_tool_call_parse_aggregate_finalize,
     try_tool_call_parse_stream,
