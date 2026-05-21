@@ -58,18 +58,21 @@ def _iter_module_tensors(
             qualified = f"{prefix}{name}" if prefix else name
             yield (qualified, buf, "buffer")
 
-    # Other tensor attributes (not params/buffers/submodules)
+    # Other tensor attributes (not params/buffers/submodules).
+    #
+    # Only inspect instance attributes.  `dir(module)` also exposes class
+    # properties; those may be aliases over registered buffers (for example
+    # vLLM FusedMoE.expert_map -> self._expert_map) and can be read-only, so
+    # registering them as independent tensor attrs causes RO materialization to
+    # try `setattr()` on a property with no setter.
     skip = (
         set(module._parameters.keys())
         | set(module._buffers.keys())
         | set(module._modules.keys())
+        | {"_parameters", "_buffers", "_modules"}
     )
-    for attr_name in dir(module):
+    for attr_name, attr_val in module.__dict__.items():
         if attr_name in skip or attr_name.startswith("__"):
-            continue
-        try:
-            attr_val = getattr(module, attr_name, None)
-        except Exception:
             continue
 
         if torch.is_tensor(attr_val) and attr_val.is_cuda:
@@ -182,7 +185,20 @@ def materialize_module_from_gms(
             ):
                 mod._buffers[attr] = tensor.detach().clone()
             else:
-                setattr(mod, attr, tensor.detach().clone())
+                try:
+                    setattr(mod, attr, tensor.detach().clone())
+                except AttributeError:
+                    descriptor = getattr(type(mod), attr, None)
+                    if (
+                        tensor_type == "tensor_attr"
+                        and isinstance(descriptor, property)
+                        and descriptor.fset is None
+                    ):
+                        logger.debug(
+                            "[GMS] Skipping read-only tensor property %r", name
+                        )
+                        continue
+                    raise
             continue
 
         # Parameters: in-place update or replace meta tensors
