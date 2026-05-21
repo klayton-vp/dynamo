@@ -590,6 +590,17 @@ struct ModelType {
 #[pymethods]
 #[allow(non_upper_case_globals)]
 impl ModelType {
+    /// No-arg constructor returns the empty ModelType (no OpenAI surface
+    /// exposed). Phase 3 of the topology readiness DEP: prefill and encode
+    /// workers register with an empty ModelType — their role is declared
+    /// via `worker_type` instead.
+    #[new]
+    fn py_new() -> Self {
+        ModelType {
+            inner: llm_rs::model_type::ModelType::empty(),
+        }
+    }
+
     #[classattr]
     const Chat: Self = ModelType {
         inner: llm_rs::model_type::ModelType::Chat,
