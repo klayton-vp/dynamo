@@ -407,6 +407,7 @@ mod tests {
     use super::*;
     use crate::engines::ValidateRequest;
     use crate::protocols::common::{OutputOptionsProvider, StopConditionsProvider};
+    use dynamo_protocols::types::{ChatCompletionTool, ChatCompletionToolType, FunctionObject};
     use serde_json::json;
 
     #[test]
@@ -600,5 +601,47 @@ mod tests {
             serde_json::from_value(request_json).expect("Failed to deserialize request");
 
         assert!(ValidateRequest::validate(&request).is_err());
+    }
+
+    #[test]
+    fn test_validate_tools_valid_names() {
+        fn make_tool(name: &str) -> ChatCompletionTool {
+            ChatCompletionTool {
+                r#type: ChatCompletionToolType::Function,
+                function: FunctionObject {
+                    name: name.to_string(),
+                    description: None,
+                    parameters: Some(json!({"type": "object", "properties": {}})),
+                    strict: None,
+                },
+            }
+        }
+
+        let tools = vec![
+            make_tool("func_name"),
+            make_tool("func-name_v2"),
+            make_tool("FuncName"),
+            make_tool("Func_Name-123"),
+        ];
+        assert!(validate::validate_tools(&Some(&tools)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_tools_invalid_names() {
+        for name in ["<func_name>", "func name", "func@name", "func,name", ""] {
+            let tools = vec![ChatCompletionTool {
+                r#type: ChatCompletionToolType::Function,
+                function: FunctionObject {
+                    name: name.to_string(),
+                    description: None,
+                    parameters: Some(json!({"type": "object", "properties": {}})),
+                    strict: None,
+                },
+            }];
+            assert!(
+                validate::validate_tools(&Some(&tools)).is_err(),
+                "expected error for name: {name:?}"
+            );
+        }
     }
 }
