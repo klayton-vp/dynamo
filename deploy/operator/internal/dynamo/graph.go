@@ -403,6 +403,22 @@ func generateSingleDCD(
 		ensurePodTemplate(&deployment.Spec.DynamoComponentDeploymentSharedSpec).Spec.ServiceAccountName = commonconsts.PlannerServiceAccountName
 	}
 
+	// EPP runs --secure-serving (self-signed TLS) on its ext_proc gRPC port,
+	// so the connection from the inference-gateway proxy is already TLS. When
+	// Istio namespace-level sidecar injection is enabled, the sidecar would
+	// terminate mTLS on the same port and collide with EPP's TLS, producing a
+	// double-TLS handshake failure that surfaces as kgateway-proxy
+	// cx_connect_fail / HTTP 500. Stamp the standard sidecar-exclusion
+	// annotation on the EPP pod template so the Istio webhook skips it. This
+	// is a no-op on clusters without Istio. The companion DestinationRule for
+	// EPP is reconciled separately by reconcileEPP.
+	if component.ComponentType == commonconsts.ComponentTypeEPP {
+		podTemplate := ensurePodTemplate(&deployment.Spec.DynamoComponentDeploymentSharedSpec)
+		if _, exists := podTemplate.Annotations[commonconsts.KubeAnnotationIstioSidecarInject]; !exists {
+			podTemplate.Annotations[commonconsts.KubeAnnotationIstioSidecarInject] = "false"
+		}
+	}
+
 	if err := applyDynDeploymentConfig(deployment, commonconsts.DynamoServicePort); err != nil {
 		return nil, err
 	}

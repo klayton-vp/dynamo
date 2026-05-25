@@ -97,6 +97,13 @@ const (
 	// corresponding node label onto the pod after scheduling.
 	KubeAnnotationTopologyLabelKey = "nvidia.com/topology-label-key"
 
+	// KubeAnnotationIstioSidecarInject is the standard Istio pod-template
+	// annotation that opts a pod in or out of sidecar injection. Setting it to
+	// "false" on a pod template tells the Istio webhook to skip that pod even
+	// when the namespace has istio-injection=enabled. It is a no-op on
+	// clusters where Istio is not installed.
+	KubeAnnotationIstioSidecarInject = "sidecar.istio.io/inject"
+
 	DynamoDeploymentConfigEnvVar      = "DYN_DEPLOYMENT_CONFIG"
 	DynamoNamespaceEnvVar             = "DYN_NAMESPACE"
 	DynamoNamespacePrefixEnvVar       = "DYN_NAMESPACE_PREFIX"

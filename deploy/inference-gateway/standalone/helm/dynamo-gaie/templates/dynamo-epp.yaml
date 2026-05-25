@@ -40,6 +40,15 @@ spec:
     metadata:
       labels:
         app: {{ .Values.model.shortName }}-epp
+      annotations:
+        # Exclude the EPP pod from Istio sidecar injection. When the namespace
+        # has istio-injection=enabled, the sidecar intercepts EPP's ext_proc
+        # gRPC port (9002). EPP runs with --secure-serving (self-signed TLS),
+        # so the sidecar's mTLS termination collides with the already-TLS
+        # connection from the inference-gateway proxy, causing a double-TLS
+        # handshake failure that surfaces as kgateway-proxy cx_connect_fail /
+        # HTTP 500. This annotation is a no-op on clusters without Istio.
+        sidecar.istio.io/inject: "false"
     spec:
       terminationGracePeriodSeconds: 130
 
