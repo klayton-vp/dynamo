@@ -176,23 +176,80 @@ CMD ["/bin/bash"]
 # COPY --from=runtime_full copies the filesystem only; image config (ENV,
 # WORKDIR, USER, ENTRYPOINT, CMD) is NOT inherited from scratch. Everything
 # below must mirror what the layered runtime_full stage produced, INCLUDING
-# upstream NVIDIA/CUDA env that the TRT-LLM base image normally provides.
-# If something runtime-critical breaks for downstream consumers, inspect
-# runtime_full with `docker inspect` and add the missing var here.
-# Library paths are handled by /etc/ld.so.conf.d/00-dynamo-trtllm.conf +
-# ldconfig in runtime_full (see RUN above), so no LD_LIBRARY_PATH needed.
+# upstream NVIDIA/CUDA/MPI env that the TRT-LLM base image normally provides
+# (captured for nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc14 via
+# `docker run --rm <upstream> env`). When bumping RUNTIME_IMAGE_TAG, re-run
+# that command and reconcile this block.
 # ============================================================================
 FROM scratch AS runtime
 COPY --from=runtime_full / /
 
+# Dynamo-owned environment. PATH mirrors upstream's binary search path
+# (torch_tensorrt, MPI, UCX, TensorRT) plus our venv/etcd in front.
 ENV DYNAMO_HOME=/workspace \
     HOME=/home/dynamo \
     VIRTUAL_ENV=/opt/dynamo/venv \
-    PATH=/opt/dynamo/venv/bin:/usr/local/bin/etcd:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PATH=/opt/dynamo/venv/bin:/usr/local/bin/etcd:/usr/local/lib/python3.12/dist-packages/torch_tensorrt/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/mpi/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/ucx/bin:/opt/tensorrt/bin \
     LD_PRELOAD=/opt/dynamo/libstdc++.so.6:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/libs/nixl/libnixl.so \
-    NIXL_PLUGIN_DIR=/usr/local/lib/python3.12/dist-packages/tensorrt_llm/libs/nixl/plugins \
-    NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    NIXL_PLUGIN_DIR=/usr/local/lib/python3.12/dist-packages/tensorrt_llm/libs/nixl/plugins
+
+# NVIDIA container toolkit + CUDA toolchain. LD_LIBRARY_PATH mirrors upstream
+# rather than relying solely on ldconfig because TRT-LLM tools (Triton kernels,
+# torch_tensorrt) look up libs via dlopen+RPATH and miss /opt/nvidia/nvda_nixl/*.
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+    NVIDIA_REQUIRE_CUDA="cuda>=9.0" \
+    CUDA_HOME=/usr/local/cuda \
+    CUDA_VERSION=13.1.1.006 \
+    CUDA_MODULE_LOADING=LAZY \
+    CUDA_BINARY_LOADER_THREAD_COUNT=8 \
+    CUDA_COMPONENT_LIST="cccl crt nvrtc driver-dev culibos-dev cudart cudart-dev nvcc tileiras" \
+    _CUDA_COMPAT_PATH=/usr/local/cuda/compat \
+    NVPL_LAPACK_MATH_MODE=PEDANTIC \
+    LD_LIBRARY_PATH=/opt/nvidia/nvda_nixl/lib/x86_64-linux-gnu:/opt/nvidia/nvda_nixl/lib64:/usr/local/ucx/lib:/usr/local/tensorrt/lib:/usr/local/cuda/lib64:/usr/local/lib/python3.12/dist-packages/torch/lib:/usr/local/lib/python3.12/dist-packages/torch_tensorrt/lib:/usr/local/cuda/compat/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+
+# OpenMPI / HPC-X. Without OPAL_PREFIX, MPI_Init_thread crashes looking for
+# help files under /build-result/... (the host path baked at upstream's build).
+# OMPI_MCA_coll_hcoll_enable=0 disables HCOLL collectives which require a
+# Mellanox switch and otherwise spew warnings on plain GPU nodes.
+ENV OPAL_PREFIX=/opt/hpcx/ompi \
+    OMPI_MCA_coll_hcoll_enable=0 \
+    UCC_CL_BASIC_TLS=^sharp \
+    UCC_EC_CUDA_EXEC_NUM_THREADS=256
+
+# Triton kernel toolchain paths — Triton resolves these once at import and
+# would fail to locate ptxas/cuobjdump otherwise.
+ENV TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas \
+    TRITON_CUOBJDUMP_PATH=/usr/local/cuda/bin/cuobjdump \
+    TRITON_NVDISASM_PATH=/usr/local/cuda/bin/nvdisasm \
+    TRITON_CUDART_PATH=/usr/local/cuda/include \
+    TRITON_CUDACRT_PATH=/usr/local/cuda/include \
+    TRITON_CUPTI_INCLUDE_PATH=/usr/local/cuda/include \
+    TRITON_CUPTI_LIB_PATH=/usr/local/cuda/lib64
+
+# PyTorch + NCCL + CUDA-arch knobs the upstream image relies on. TRT-LLM
+# uses upstream's PyTorch underneath, so PYTORCH_HOME/TORCH_CUDA_ARCH_LIST
+# need to match what shipped wheels were compiled against.
+ENV PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.99999 \
+    TORCH_NCCL_USE_COMM_NONBLOCKING=0 \
+    PYTORCH_HOME=/opt/pytorch/pytorch \
+    TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1 \
+    TORCH_CUDA_ARCH_LIST="7.5 8.0 8.6 9.0 10.0 12.0+PTX" \
+    TORCHINDUCTOR_LOOP_ORDERING_AFTER_FUSION=0 \
+    CUDA_ARCH_LIST="7.5 8.0 8.6 9.0 10.0 12.0" \
+    LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+
+# Python / pip — system Python is PEP 668 externally-managed; upstream opts
+# out via PIP_BREAK_SYSTEM_PACKAGES and pins via PIP_CONSTRAINT.
+ENV BASH_ENV=/etc/bash.bashrc \
+    ENV=/etc/shinit_v2 \
+    SHELL=/bin/bash \
+    LC_ALL=C.UTF-8 \
+    PYTHONIOENCODING=utf-8 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PIP_CONSTRAINT=/etc/pip/constraint.txt \
+    PIP_DEFAULT_TIMEOUT=100
 
 WORKDIR /workspace
 
