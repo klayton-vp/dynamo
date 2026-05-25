@@ -28,7 +28,14 @@ COPY --from=dynamo_base /usr/local/bin/etcd/ /usr/local/bin/etcd/
 COPY --from=dynamo_base /bin/uv /usr/bin/uv
 COPY --from=dynamo_base /bin/uvx /usr/bin/uvx
 
+{% if target == "runtime" %}
+# Layered build stage. Renamed from `runtime` so the final stage below can take
+# that name as a flat (single-layer) export, keeping cumulative layer depth
+# under overlay2's 128-layer cap for downstream wrapper images.
+FROM ${RUNTIME_IMAGE}:${RUNTIME_IMAGE_TAG} AS runtime_full
+{% else %}
 FROM ${RUNTIME_IMAGE}:${RUNTIME_IMAGE_TAG} AS runtime
+{% endif %}
 
 ARG ENABLE_KVBM
 ARG ENABLE_GPU_MEMORY_SERVICE
@@ -158,3 +165,43 @@ ENV DYNAMO_COMMIT_SHA=${DYNAMO_COMMIT_SHA}
 # other Dynamo images and can execute arbitrary commands directly.
 ENTRYPOINT []
 CMD ["/bin/bash"]
+
+{% if target == "runtime" %}
+# ============================================================================
+# Squash everything (TRT-LLM upstream + our additions) into a single filesystem
+# layer. Downstream wrapper images (k8s wrapper, benchmarks) stack on top of
+# this one layer instead of inheriting ~100 layers and hitting overlay2's
+# 128-layer cap with "max depth exceeded" at pull time.
+#
+# COPY --from=runtime_full copies the filesystem only; image config (ENV,
+# WORKDIR, USER, ENTRYPOINT, CMD) is NOT inherited from scratch. Everything
+# below must mirror what the layered runtime_full stage produced, INCLUDING
+# upstream NVIDIA/CUDA env that the TRT-LLM base image normally provides.
+# If something runtime-critical breaks for downstream consumers, inspect
+# runtime_full with `docker inspect` and add the missing var here.
+# Library paths are handled by /etc/ld.so.conf.d/00-dynamo-trtllm.conf +
+# ldconfig in runtime_full (see RUN above), so no LD_LIBRARY_PATH needed.
+# ============================================================================
+FROM scratch AS runtime
+COPY --from=runtime_full / /
+
+ENV DYNAMO_HOME=/workspace \
+    HOME=/home/dynamo \
+    VIRTUAL_ENV=/opt/dynamo/venv \
+    PATH=/opt/dynamo/venv/bin:/usr/local/bin/etcd:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_PRELOAD=/opt/dynamo/libstdc++.so.6:/usr/local/lib/python3.12/dist-packages/tensorrt_llm/libs/nixl/libnixl.so \
+    NIXL_PLUGIN_DIR=/usr/local/lib/python3.12/dist-packages/tensorrt_llm/libs/nixl/plugins \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+WORKDIR /workspace
+
+# ARG does not survive across FROMs — redeclare for the SHA env.
+ARG DYNAMO_COMMIT_SHA
+ENV DYNAMO_COMMIT_SHA=${DYNAMO_COMMIT_SHA}
+
+USER dynamo
+
+ENTRYPOINT []
+CMD ["/bin/bash"]
+{% endif %}
