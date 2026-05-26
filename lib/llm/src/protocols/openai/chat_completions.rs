@@ -450,4 +450,85 @@ mod tests {
             assert_eq!(output_options.skip_special_tokens, Some(skip_value));
         }
     }
+
+    #[test]
+    fn test_response_format_structural_tag_deserializes_and_maps() {
+        use crate::protocols::common::SamplingOptionsProvider;
+        use crate::protocols::openai::common_ext::CommonExtProvider;
+
+        let json_str = json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {
+                "type": "structural_tag",
+                "structures": [
+                    {"begin": "<tool_call>", "end": "</tool_call>", "schema": {"type": "object"}}
+                ],
+                "triggers": ["<tool_call>"]
+            }
+        });
+
+        // Relaxed shape: the real Yutori format now deserializes (previously 400'd).
+        let request: NvCreateChatCompletionRequest =
+            serde_json::from_value(json_str).expect("structural_tag request should deserialize");
+
+        // It is surfaced as a structural_tag, not coerced into guided_json.
+        let st = request
+            .get_structural_tag()
+            .expect("get_structural_tag should be Some");
+        assert_eq!(st["type"], json!("structural_tag"));
+        assert!(st["structures"].is_array());
+        assert_eq!(request.get_guided_json(), None);
+
+        // It threads through to the backend guided_decoding the worker reads.
+        let sampling = request
+            .extract_sampling_options()
+            .expect("extract_sampling_options should succeed");
+        let gd = sampling
+            .guided_decoding
+            .expect("guided_decoding should be populated");
+        assert!(gd.structural_tag.is_some());
+        assert_eq!(gd.json, None);
+    }
+
+    #[test]
+    fn test_tool_message_content_array_deserializes() {
+        // Real Yutori tool messages send content as an array of text parts.
+        let json_str = json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "tool",
+                    "content": [{"type": "text", "text": "Clicked 1x\nCurrent URL: https://x.com/"}],
+                    "tool_call_id": "chatcmpl-tool-abc"
+                }
+            ]
+        });
+
+        let request: NvCreateChatCompletionRequest = serde_json::from_value(json_str)
+            .expect("tool message with array content should deserialize");
+        assert_eq!(request.inner.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_response_format_json_schema_still_works() {
+        use crate::protocols::openai::common_ext::CommonExtProvider;
+
+        // Strict shape regression guard: spec-conformant json_schema unaffected.
+        let json_str = json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "foo", "schema": {"type": "object"}}
+            }
+        });
+
+        let request: NvCreateChatCompletionRequest =
+            serde_json::from_value(json_str).expect("json_schema request should deserialize");
+
+        assert_eq!(request.get_guided_json(), Some(json!({"type": "object"})));
+        assert_eq!(request.get_structural_tag(), None);
+    }
 }

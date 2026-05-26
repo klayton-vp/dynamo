@@ -845,14 +845,14 @@ mod tests {
     #[test]
     fn test_guided_decoding_options_from_optional() {
         // All None returns Ok(None)
-        let opts = GuidedDecodingOptions::from_optional(None, None, None, None, None, None);
+        let opts = GuidedDecodingOptions::from_optional(None, None, None, None, None, None, None);
         assert!(opts.is_ok());
         assert!(opts.unwrap().is_none());
 
         // Only one set returns Ok(Some)
         let regex = Some(r"\w+".to_string());
         let opts =
-            GuidedDecodingOptions::from_optional(None, regex.clone(), None, None, None, None);
+            GuidedDecodingOptions::from_optional(None, regex.clone(), None, None, None, None, None);
         assert!(opts.is_ok());
         let val = opts.unwrap();
         assert!(val.is_some());
@@ -867,11 +867,13 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(opts.is_err());
 
         // Choice set but empty vector should not count as set
-        let opts = GuidedDecodingOptions::from_optional(None, None, Some(vec![]), None, None, None);
+        let opts =
+            GuidedDecodingOptions::from_optional(None, None, Some(vec![]), None, None, None, None);
         assert!(opts.is_ok());
         let val = opts.unwrap();
         assert!(val.is_none());
@@ -881,6 +883,7 @@ mod tests {
             None,
             None,
             Some(vec!["A".to_string()]),
+            None,
             None,
             None,
             None,
