@@ -294,9 +294,9 @@ def ensure_dummy_tokenizer_for_tts(model: str) -> list[Path]:
 def cleanup_dummy_tokenizer_for_tts(paths: list[Path]):
     """Remove dummy tokenizer.json files created by ensure_dummy_tokenizer_for_tts.
 
-    Must be called after register_model() completes so the fake tokenizer
-    doesn't interfere with vLLM-Omni's inference-time tokenizer loading
-    (AutoTokenizer.from_pretrained picks up our stub and crashes).
+    Defer to worker shutdown: the frontend's discovery watcher re-reads the
+    snapshot tokenizer.json asynchronously after the etcd Added event fires,
+    so deleting the placeholder eagerly races the watcher.
     """
     for path in paths:
         try:
