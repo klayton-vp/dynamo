@@ -214,10 +214,34 @@ impl CommonExtProvider for NvCreateChatCompletionRequest {
                         return Some(schema);
                     }
                 }
+                // structural_tag is a distinct guided-decoding mode (not a JSON
+                // schema); it is surfaced via get_structural_tag(), not here.
+                ResponseFormat::StructuralTag { .. } => {}
             }
         }
 
         None
+    }
+
+    fn get_structural_tag(&self) -> Option<serde_json::Value> {
+        use dynamo_protocols::types::ResponseFormat;
+        match self.inner.response_format.as_ref()? {
+            ResponseFormat::StructuralTag {
+                structures,
+                triggers,
+            } => {
+                // Reconstruct the SGLang structural-tag spec the backend expects
+                // (`{"type":"structural_tag","structures":[...],"triggers":[...]}`).
+                let mut spec = serde_json::Map::new();
+                spec.insert("type".to_string(), serde_json::json!("structural_tag"));
+                spec.insert("structures".to_string(), structures.clone());
+                if let Some(triggers) = triggers {
+                    spec.insert("triggers".to_string(), triggers.clone());
+                }
+                Some(serde_json::Value::Object(spec))
+            }
+            _ => None,
+        }
     }
 
     fn get_guided_regex(&self) -> Option<String> {

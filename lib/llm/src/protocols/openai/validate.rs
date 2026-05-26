@@ -144,6 +144,16 @@ pub fn validate_response_format(
             }
             Ok(())
         }
+        ResponseFormat::StructuralTag { structures, .. } => {
+            // SGLang requires at least the `structures` array; contents are
+            // validated by the backend's xgrammar compiler.
+            if !structures.is_array() {
+                anyhow::bail!(
+                    "`response_format.structures` must be an array when `response_format.type` is `structural_tag`"
+                );
+            }
+            Ok(())
+        }
     }
 }
 

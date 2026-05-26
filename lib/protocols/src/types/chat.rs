@@ -65,7 +65,6 @@ pub use async_openai::types::chat::{
     Prompt,
     PromptTokensDetails,
     ReasoningEffort,
-    ResponseFormat,
     ResponseFormatJsonSchema,
     Role,
     ServiceTier,
@@ -76,6 +75,33 @@ pub use async_openai::types::chat::{
     WebSearchUserLocation,
     WebSearchUserLocationType,
 };
+
+/// Response format for chat completions.
+///
+/// Dynamo-owned superset of `async_openai::types::chat::ResponseFormat` (see this
+/// crate's CLAUDE.md, ownership rubric #2: extend the schema with a field upstream
+/// won't carry). Adds the SGLang `structural_tag` variant for tagged guided
+/// decoding. The `text` / `json_object` / `json_schema` variants are wire-identical
+/// to upstream (`#[serde(tag = "type", rename_all = "snake_case")]`), so
+/// spec-conformant clients deserialize unchanged.
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    JsonObject,
+    JsonSchema {
+        json_schema: ResponseFormatJsonSchema,
+    },
+    /// SGLang structural-tag guided decoding: constrains tagged regions (e.g.
+    /// `<tool_call>...</tool_call>`) to a schema while allowing free text
+    /// elsewhere. Not part of the OpenAI spec; captured opaquely here and
+    /// forwarded to the backend via `GuidedDecodingOptions::structural_tag`.
+    StructuralTag {
+        structures: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        triggers: Option<serde_json::Value>,
+    },
+}
 
 // Upstream renamed Stop -> StopConfiguration; re-export under old name for compat
 pub use async_openai::types::chat::StopConfiguration as Stop;

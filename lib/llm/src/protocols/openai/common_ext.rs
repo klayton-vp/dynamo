@@ -102,6 +102,12 @@ pub trait CommonExtProvider {
     fn get_guided_decoding_backend(&self) -> Option<String>;
     #[allow(unused)] // Not used
     fn get_guided_whitespace_pattern(&self) -> Option<String>;
+    /// SGLang structural-tag guided decoding spec, if the request carries one.
+    /// Defaults to `None`; only chat completions (which expose `response_format`)
+    /// override this.
+    fn get_structural_tag(&self) -> Option<serde_json::Value> {
+        None
+    }
 
     /// Other sampling Options
     fn get_top_k(&self) -> Option<i32>;

@@ -367,6 +367,12 @@ pub struct GuidedDecodingOptions {
     /// If specified, whitespace pattern to use for guided decoding. Can be a string or null.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whitespace_pattern: Option<String>,
+
+    /// If specified, SGLang structural-tag guided decoding spec. Serializes to the
+    /// `structural_tag` key the backend reads (`guided_decoding.structural_tag`).
+    /// Carried opaquely as JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structural_tag: Option<serde_json::Value>,
 }
 
 impl GuidedDecodingOptions {
@@ -386,6 +392,7 @@ impl GuidedDecodingOptions {
             grammar,
             backend,
             whitespace_pattern,
+            structural_tag: None,
         }
     }
 
@@ -411,6 +418,7 @@ impl GuidedDecodingOptions {
         grammar: Option<String>,
         backend: Option<String>,
         whitespace_pattern: Option<String>,
+        structural_tag: Option<serde_json::Value>,
     ) -> Result<Option<Self>> {
         let is_empty_choice = choice.as_ref().is_none_or(|v| v.is_empty());
         if json.is_none()
@@ -418,10 +426,14 @@ impl GuidedDecodingOptions {
             && is_empty_choice
             && grammar.is_none()
             && whitespace_pattern.is_none()
+            && structural_tag.is_none()
         {
             return Ok(None);
         }
-        let instance = Self::validated(json, regex, choice, grammar, backend, whitespace_pattern)?;
+        let mut instance =
+            Self::validated(json, regex, choice, grammar, backend, whitespace_pattern)?;
+        instance.structural_tag = structural_tag;
+        instance.validate()?;
         Ok(Some(instance))
     }
 
@@ -434,6 +446,7 @@ impl GuidedDecodingOptions {
             self.choice.as_ref().is_some_and(|v| !v.is_empty()),
             self.grammar.is_some(),
             self.whitespace_pattern.is_some(),
+            self.structural_tag.is_some(),
         ]
         .iter()
         .filter(|&&v| v)
@@ -441,7 +454,7 @@ impl GuidedDecodingOptions {
 
         if count > 1 {
             return Err(anyhow::anyhow!(
-                "Only one of json, regex, choice, or grammar can be set, but multiple are specified: {:?}",
+                "Only one of json, regex, choice, grammar, or structural_tag can be set, but multiple are specified: {:?}",
                 self
             ));
         }
