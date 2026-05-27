@@ -45,10 +45,6 @@ pub use async_openai::types::chat::{
     ChatCompletionRequestSystemMessageArgs,
     ChatCompletionRequestSystemMessageContent,
     ChatCompletionRequestSystemMessageContentPart,
-    ChatCompletionRequestToolMessage,
-    ChatCompletionRequestToolMessageArgs,
-    ChatCompletionRequestToolMessageContent,
-    ChatCompletionRequestToolMessageContentPart,
     ChatCompletionResponseMessageAudio,
     ChatCompletionTokenLogprob,
     Choice,
@@ -564,11 +560,41 @@ pub struct ChatCompletionRequestAssistantMessage {
     pub function_call: Option<FunctionCall>,
 }
 
+/// Tool message content, relaxed to accept multimodal parts.
+///
+/// Upstream (and the OpenAI spec) permit only text in `tool` messages. Real
+/// computer-use agents (Qwen3-VL / Yutori) return browser screenshots as
+/// `image_url` parts inside tool results, which upstream rejects. Per this
+/// crate's CLAUDE.md (rubric #1: upstream rejects a shape real clients send), we
+/// own this type and accept an opaque array of content parts, forwarded
+/// faithfully to the multimodal-aware backend.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum ChatCompletionRequestToolMessageContent {
+    Text(String),
+    Array(Vec<serde_json::Value>),
+}
+
+impl Default for ChatCompletionRequestToolMessageContent {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
+}
+
+/// Tool message, owned so its `content` accepts multimodal parts (see
+/// `ChatCompletionRequestToolMessageContent`).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct ChatCompletionRequestToolMessage {
+    pub content: ChatCompletionRequestToolMessageContent,
+    pub tool_call_id: String,
+}
+
 /// Chat completion request message enum.
 ///
 /// Redefined to use our extended `ChatCompletionRequestAssistantMessage`
-/// (with reasoning_content) and `ChatCompletionRequestUserMessage`
-/// (which references our extended content parts with video/audio).
+/// (with reasoning_content), `ChatCompletionRequestUserMessage` (extended
+/// content parts with video/audio), and `ChatCompletionRequestToolMessage`
+/// (multimodal tool results).
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "role")]
 #[serde(rename_all = "lowercase")]

@@ -11,7 +11,8 @@ use super::{
     ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage,
     ChatCompletionRequestMessageContentPartAudio, ChatCompletionRequestMessageContentPartAudioUrl,
     ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
-    ChatCompletionRequestMessageContentPartVideo, ChatCompletionRequestUserMessageContentPart,
+    ChatCompletionRequestMessageContentPartVideo, ChatCompletionRequestToolMessage,
+    ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageContentPart,
     ChatCompletionToolChoiceOption, ChatCompletionToolType, FunctionName, ImageUrl, VideoUrl,
 };
 
@@ -99,7 +100,21 @@ impl From<async_openai::types::chat::ChatCompletionRequestToolMessage>
     for ChatCompletionRequestMessage
 {
     fn from(value: async_openai::types::chat::ChatCompletionRequestToolMessage) -> Self {
-        Self::Tool(value)
+        use async_openai::types::chat::ChatCompletionRequestToolMessageContent as AoToolContent;
+        // Upstream tool content is text-only; map into our relaxed owned type.
+        let content = match value.content {
+            AoToolContent::Text(s) => ChatCompletionRequestToolMessageContent::Text(s),
+            AoToolContent::Array(parts) => ChatCompletionRequestToolMessageContent::Array(
+                parts
+                    .into_iter()
+                    .filter_map(|p| serde_json::to_value(p).ok())
+                    .collect(),
+            ),
+        };
+        Self::Tool(ChatCompletionRequestToolMessage {
+            content,
+            tool_call_id: value.tool_call_id,
+        })
     }
 }
 

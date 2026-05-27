@@ -6,14 +6,6 @@
 use dynamo_llm::protocols::openai::chat_completions::NvCreateChatCompletionRequest;
 use dynamo_llm::protocols::openai::common_ext::CommonExtProvider;
 
-// IGNORED: blocked on a *second*, independent relaxation. The real Yutori
-// computer-use request carries browser screenshots as `image_url` parts inside
-// `tool` messages. async-openai's `ChatCompletionRequestToolMessageContent`
-// (per OpenAI spec) only permits text in tool messages, so the payload fails to
-// deserialize on those parts (`ChatCompletionRequestToolMessageContent`), not on
-// structural_tag. Relaxing tool-message content to accept image parts is a
-// separate change (touches the multimodal path); tracked as follow-up.
-#[ignore = "blocked on multimodal tool-message content (image_url in tool results)"]
 #[test]
 fn real_yutori_request_with_structural_tag_deserializes() {
     let body = include_str!("fixtures/yutori_sample_request.json");
