@@ -19,8 +19,9 @@ use anyhow::Context;
 use anyhow::{Result, bail};
 
 use dynamo_protocols::types::{
-    ChatCompletionRequestMessage, ChatCompletionRequestUserMessageContent,
-    ChatCompletionRequestUserMessageContentPart, ChatCompletionToolChoiceOption, EncodingFormat,
+    ChatCompletionRequestMessage, ChatCompletionRequestToolMessageContent,
+    ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
+    ChatCompletionToolChoiceOption, EncodingFormat,
 };
 use dynamo_runtime::error::{DynamoError, ErrorType};
 use futures::Stream;
@@ -427,40 +428,87 @@ impl OpenAIPreprocessor {
         let has_media_loader = self.media_loader.is_some();
 
         for message in messages.iter() {
-            let content_parts = match message {
-                ChatCompletionRequestMessage::User(u) => match &u.content {
-                    ChatCompletionRequestUserMessageContent::Array(parts) => parts,
-                    _ => continue,
-                },
-                _ => continue,
-            };
-            for content_part in content_parts.iter() {
-                if has_media_loader {
-                    let type_str = match content_part {
-                        ChatCompletionRequestUserMessageContentPart::ImageUrl(_) => "image_url",
-                        ChatCompletionRequestUserMessageContentPart::VideoUrl(_) => "video_url",
-                        ChatCompletionRequestUserMessageContentPart::AudioUrl(_) => "audio_url",
-                        _ => continue,
+            match message {
+                ChatCompletionRequestMessage::User(u) => {
+                    let ChatCompletionRequestUserMessageContent::Array(content_parts) = &u.content
+                    else {
+                        continue;
                     };
-                    fetch_tasks.push((type_str.to_string(), content_part));
-                } else {
-                    let (type_str, url) = match content_part {
-                        ChatCompletionRequestUserMessageContentPart::ImageUrl(p) => {
-                            ("image_url", p.image_url.url.clone())
+                    for content_part in content_parts.iter() {
+                        if has_media_loader {
+                            let type_str = match content_part {
+                                ChatCompletionRequestUserMessageContentPart::ImageUrl(_) => {
+                                    "image_url"
+                                }
+                                ChatCompletionRequestUserMessageContentPart::VideoUrl(_) => {
+                                    "video_url"
+                                }
+                                ChatCompletionRequestUserMessageContentPart::AudioUrl(_) => {
+                                    "audio_url"
+                                }
+                                _ => continue,
+                            };
+                            fetch_tasks.push((type_str.to_string(), content_part));
+                        } else {
+                            let (type_str, url) = match content_part {
+                                ChatCompletionRequestUserMessageContentPart::ImageUrl(p) => {
+                                    ("image_url", p.image_url.url.clone())
+                                }
+                                ChatCompletionRequestUserMessageContentPart::VideoUrl(p) => {
+                                    ("video_url", p.video_url.url.clone())
+                                }
+                                ChatCompletionRequestUserMessageContentPart::AudioUrl(p) => {
+                                    ("audio_url", p.audio_url.url.clone())
+                                }
+                                _ => continue,
+                            };
+                            media_map
+                                .entry(type_str.to_string())
+                                .or_default()
+                                .push(MultimodalData::Url(url));
                         }
-                        ChatCompletionRequestUserMessageContentPart::VideoUrl(p) => {
-                            ("video_url", p.video_url.url.clone())
-                        }
-                        ChatCompletionRequestUserMessageContentPart::AudioUrl(p) => {
-                            ("audio_url", p.audio_url.url.clone())
-                        }
-                        _ => continue,
-                    };
-                    media_map
-                        .entry(type_str.to_string())
-                        .or_default()
-                        .push(MultimodalData::Url(url));
+                    }
                 }
+                // Tool messages can carry array content with image_url/video_url/audio_url parts
+                // (computer-use agents put screenshots in tool-result messages). Walk them like
+                // user-message arrays. Parts are raw serde_json::Value (we relaxed the type to
+                // accept this shape in lib/protocols); pull the URL by key. The media_loader/RDMA
+                // fast path is user-only because it requires typed parts — tool images go through
+                // the URL-passthrough branch, which is what aggregated SGLang serving uses anyway.
+                ChatCompletionRequestMessage::Tool(t) => {
+                    let ChatCompletionRequestToolMessageContent::Array(content_parts) = &t.content
+                    else {
+                        continue;
+                    };
+                    for part in content_parts.iter() {
+                        let Some(part_type) =
+                            part.get("type").and_then(|v| v.as_str())
+                        else {
+                            continue;
+                        };
+                        let media_key = match part_type {
+                            "image_url" => "image_url",
+                            "video_url" => "video_url",
+                            "audio_url" => "audio_url",
+                            _ => continue,
+                        };
+                        let Some(url) = part
+                            .get(media_key)
+                            .and_then(|m| m.get("url"))
+                            .and_then(|u| u.as_str())
+                        else {
+                            continue;
+                        };
+                        if url.is_empty() {
+                            continue;
+                        }
+                        media_map
+                            .entry(media_key.to_string())
+                            .or_default()
+                            .push(MultimodalData::RawUrl(url.to_string()));
+                    }
+                }
+                _ => continue,
             }
         }
 
